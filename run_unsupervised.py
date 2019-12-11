@@ -14,15 +14,15 @@ from src.minibatch import EdgeBatch, NeighborSampler
 from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT
 
 args = easydict.EasyDict({
-    "infolder": "../dataset/yelp/sample-167888",
-    "outfolder": "../dataset/yelp/sample-167888/embeddings",
-    "gpu": 0,
-    "model": "GAT",
-    "epoch": 1,
-    "batch_size": 512,
-    "dropout": 0.0,
-    "ffd_dropout": 0.0,
-    "attn_dropout": 0.0,
+    "infolder": "../dataset/yelp/sample-74036",
+    "outfolder": "../dataset/yelp/sample-74036/embeddings",
+    "gpu": 1,
+    "model": "SAGE",
+    "epoch": 10,
+    "batch_size": 128, # 64 for GAT; 128 for SAGE
+    "dropout": 0.2,
+    "ffd_dropout": 0.2,
+    "attn_dropout": 0.2,
     "weight_decay": 0.0,
     "learning_rate": 0.0001,
     "max_degree": 100,
@@ -75,8 +75,12 @@ def train(data_trn):
     else:
         model = UnsupervisedGAT(placeholders, features, adj_info, minibatch.deg, layer_infos, args)
     
+    # print out model size
+    para_size = np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])
+    print ("Model size: {}".format(para_size))
+    
     # initialize session
-    sess = tf.Session()
+    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
     sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj})
     
     # begin training
