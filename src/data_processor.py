@@ -130,11 +130,12 @@ class yelpProcessor(object):
             if u_id in user_dict and i_id in item_dict:
                 u_idx = user_dict[u_id]
                 i_idx = item_dict[i_id]
-                pair = (u_id, i_id)
-                if pair not in edge_dict:
-                    edge_dict[pair] = 1
-                else:
-                    edge_dict[pair] += 1
+                pair = [(u_id, i_id), (i_id, u_id)]
+                for p in pairs:
+                    if p not in edge_dict:
+                        edge_dict[p] = 1
+                    else:
+                        edge_dict[p] += 1
 
                 if u_idx not in adj_dict:
                     adj_dict[u_idx] = [i_idx]
@@ -190,11 +191,12 @@ class yelpProcessor(object):
                 u_idx = user_dict[obj['user_id']]
                 i_idx = item_dict[obj['business_id']]
                 rate = int(obj['stars'])
-                pair = (u_idx, i_idx)
-                if pair not in edge_rate:
-                    edge_rate[pair] = [rate]
-                else:
-                    edge_rate[pair].append(rate)
+                pairs = [(u_idx, i_idx), (i_idx, u_idx)]
+                for p in pairs:
+                    if p not in edge_rate:
+                        edge_rate[p] = [rate]
+                    else:
+                        edge_rate[p].append(rate)
             for k, v in edge_rate.items():
                 edge_rate[k] = int(sum(v)/len(v))
             return edge_rate
@@ -224,15 +226,16 @@ class yelpProcessor(object):
                                 feat[self.vocab[t]] = 1
                             else:
                                 feat[self.vocab[t]] += 1
-                    pair = (u_idx, i_idx)
-                    if pair not in edge_text:
-                        edge_text[(u_idx, i_idx)] = feat
-                    else:
-                        for k, v in feat.items():
-                            if k not in edge_text[(u_idx, i_idx)]:
-                                edge_text[(u_idx, i_idx)][k] = v
-                            else:
-                                edge_text[(u_idx, i_idx)][k] += v
+                    pairs = [(u_idx, i_idx), (i_idx, u_idx)]
+                    for p in pairs:
+                        if p not in edge_text:
+                            edge_text[p] = feat
+                        else:
+                            for k, v in feat.items():
+                                if k not in edge_text[p]:
+                                    edge_text[p][k] = v
+                                else:
+                                    edge_text[p][k] += v
         except KeyboardInterrupt:
             objs.close()
             raise
@@ -327,13 +330,11 @@ if __name__ == "__main__":
     folder = "../../dataset/yelp"
     processor = yelpProcessor(folder)
     # filter dense graph
-    (user_objs, item_objs, review_objs) = processor.filter_dense(40, 50, 15)
+    (user_objs, item_objs, review_objs) = processor.filter_dense(50, 55, 13)
     # output folder
-    path = os.path.join(folder, "sample-"+str(len(review_objs))) 
-    try: 
-        os.mkdir(path) 
-    except OSError as error: 
-        print(error) 
+    path = os.path.join(folder, "sample-"+str(len(review_objs)))
+    if not os.path.exists(path):
+        os.makedirs(path)
     
     with open('{}/business.json'.format(path), 'w') as f:
         json.dump(item_objs, f)

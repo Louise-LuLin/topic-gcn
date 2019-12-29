@@ -11,18 +11,19 @@ from tensorflow.python.util import deprecation
 
 from src.data_loader import DataLoader
 from src.minibatch import EdgeBatch, NeighborSampler
-from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT
+from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT
 
 args = easydict.EasyDict({
-    "infolder": "../dataset/yelp/sample-74036",
-    "outfolder": "../dataset/yelp/sample-74036/embeddings",
-    "gpu": 1,
+    "infolder": "../dataset/yelp/sample-1582",
+    "outfolder": "../dataset/yelp/sample-1582/embeddings",
+    "gpu": 3,
     "model": "SAGE",
-    "epoch": 10,
+    "epoch": 20,
     "batch_size": 128, # 64 for GAT; 128 for SAGE
     "dropout": 0.2,
     "ffd_dropout": 0.2,
     "attn_dropout": 0.2,
+    "vae_dropout": 0.2,
     "weight_decay": 0.0,
     "learning_rate": 0.0001,
     "max_degree": 100,
@@ -40,7 +41,7 @@ deprecation._PRINT_DEPRECATION_WARNINGS = False
 
 def train(data_trn):
     # data: graph, node features, random walks
-    (G, features, walks) = data_trn
+    (G, features, walks, edgetexts, vocab_dim) = data_trn
     print ('===== start training on graph(node={}, edge={}, walks={})====='.format(len(G.nodes()), len(G.edges()), len(walks)))
     print ('batch_size: ', '{}\n'.format(args.dropout),
            'max_degree', '{}\n'.format(args.max_degree),
@@ -57,6 +58,7 @@ def train(data_trn):
         'dropout': tf.placeholder_with_default(0., shape=(), name='dropout'),
         'ffd_dropout': tf.placeholder_with_default(0., shape=(), name='ffd_dropout'),
         'attn_dropout': tf.placeholder_with_default(0., shape=(), name='attn_dropout'),
+        'vae_dropout': tf.placeholder_with_default(0., shape=(), name='vae_dropout'),
         'batch_size': tf.placeholder(tf.int32, name='batch_size'),
     }
     
@@ -69,19 +71,23 @@ def train(data_trn):
     # two layers
     layer_infos = [LayerInfo('layer1', sampler, args.sample1, args.dim1, args.head1),
                    LayerInfo('layer2', sampler, args.sample2, args.dim2, args.head2)]
+
+    # initialize session
+    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+        
     # GCN model
     if args.model == 'SAGE':
         model = UnsupervisedSAGE(placeholders, features, adj_info, minibatch.deg, layer_infos, args)
-    else:
+    elif args.model == 'GAT':
         model = UnsupervisedGAT(placeholders, features, adj_info, minibatch.deg, layer_infos, args)
-    
+    else:
+        model = UnsupervisedCGAT(placeholders, features, edgetexts, vocab_dim, adj_info, minibatch.deg, layer_infos, args)
+
+    sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj})
+
     # print out model size
     para_size = np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])
     print ("Model size: {}".format(para_size))
-    
-    # initialize session
-    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
-    sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj})
     
     # begin training
     t = time.time()
@@ -96,19 +102,34 @@ def train(data_trn):
             feed_dict.update({placeholders['dropout']: args.dropout})
             feed_dict.update({placeholders['ffd_dropout']: args.ffd_dropout})
             feed_dict.update({placeholders['attn_dropout']: args.attn_dropout})
+            feed_dict.update({placeholders['vae_dropout']: args.vae_dropout})
             
-            # train
-            outs = sess.run([model.loss, model.mrr, model.outputs1], 
-                            feed_dict=feed_dict)
-            train_loss = outs[0]
-            train_mrr = outs[1]
+            # train  
+            if args.model == 'CGAT':
+                outs = sess.run([model.graph_loss, model.reconstr_loss, model.kl_loss, model.loss, model.mrr], 
+                                feed_dict=feed_dict)
+                graph_loss = outs[0]
+                reconstr_loss = outs[1]
+                kl_loss = outs[2]
+                train_loss = outs[3]
+                train_mrr = outs[4]
             
-            # print log
-            if iter % 50 == 0:
-                print ('-- iter: ', '{:4d}'.format(iter),
-                       'train_loss=', '{:.5f}'.format(train_loss),
-                       'train_mrr=', '{:.5f}'.format(train_mrr),
-                       'time so far=', '{:.5f}'.format((time.time() - t)/60))
+                # print log
+                if iter % 50 == 0:
+                    print ('-- iter: ', '{:4d}'.format(iter),
+                           'graph_loss=', '{:.5f}'.format(graph_loss),
+                           'reconstr_loss=', '{:.5f}'.format(reconstr_loss),
+                           'kl_loss=', '{:.5f}'.format(kl_loss),
+                           'train_loss=', '{:.5f}'.format(train_loss),
+                           'train_mrr=', '{:.5f}'.format(train_mrr),
+                           'time so far=', '{:.5f}'.format((time.time() - t)/60))
+            else:
+                outs = sess.run([model.loss, model.mrr, model.inputs1, model.batch_size], feed_dict=feed_dict)
+                if iter % 50 == 0:
+                    print ('-- iter: ', '{:4d}'.format(iter),
+                           'train_loss=', '{:.5f}'.format(outs[0]),
+                           'train_mrr=', '{:.5f}'.format(outs[1]),
+                           'time so far=', '{:.5f}'.format((time.time() - t)/60))
             iter += 1
             
     print ('Training finished!')
@@ -133,19 +154,13 @@ def train(data_trn):
         os.makedirs(args.outfolder)
     with open('{}/{}.bin'.format(args.outfolder, args.model), 'wb') as f:
         pkl.dump((embeddings, nodes), f)
-
+        
 def main():
     # load data
     loader = DataLoader(args.infolder)
     # train
-    train((loader.G_trn, loader.features, loader.walks))
+    train((loader.G_trn, loader.features, loader.walks, loader.edge_text, len(loader.vocab)))
 
 if __name__=='__main__':
     main()
-
-
-
-
-
-
 

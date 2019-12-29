@@ -30,9 +30,9 @@ class DataLoader(object):
             self.adj = pkl.load(f)
 
         # load edge info
-        with open("{}/edge_rate.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx), v=int(ave(rating))
+        with open("{}/edge_rate.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v=int(ave(rating))
             self.edge_rate = pkl.load(f)
-        with open("{}/edge_text.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx), v={word_idx: count}
+        with open("{}/edge_text.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v={word_idx: count}
             self.edge_text = pkl.load(f)
             
         print ('===== load data =====')
