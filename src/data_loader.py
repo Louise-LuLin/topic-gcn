@@ -21,25 +21,25 @@ class DataLoader(object):
         with open("{}/vocab_map.bin".format(folder), 'rb') as f: #dict: k=word, v=idx
             self.vocab = pkl.load(f)
         # label
-        with open("{}/label_map.bin".format(folder), 'rb') as f:  #dict: k=label, v=idx
-            self.label_dict = pkl.load(f)
-        with open("{}/node_label{}.bin".format(folder, uni_str), 'rb') as f:  #np.array: node * classN
-            self.node_label = pkl.load(f)
+#         with open("{}/label_map.bin".format(folder), 'rb') as f:  #dict: k=label, v=idx
+#             self.label_dict = pkl.load(f)
+#         with open("{}/node_label{}.bin".format(folder, uni_str), 'rb') as f:  #np.array: node * classN
+#             self.node_label = pkl.load(f)
         # ajacent dict
         with open('{}/adj_all.bin'.format(folder), 'rb') as f: #dict: k=node_idx, v=[neighbors_idx]
             self.adj = pkl.load(f)
 
         # load edge info
-        with open("{}/edge_rate.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v=int(ave(rating))
-            self.edge_rate = pkl.load(f)
+#         with open("{}/edge_rate.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v=int(ave(rating))
+#             self.edge_rate = pkl.load(f)
         with open("{}/edge_text.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v={word_idx: count}
             self.edge_text = pkl.load(f)
             
         print ('===== load data =====')
         print ('{} nodes: {} users, {} items'.format(len(self.adj), len(self.user_dict), len(self.item_dict)))
-        print ("{} unique edges".format(len(self.edge_rate)))
+#         print ("{} unique edges".format(len(self.edge_rate)))
         print ("{} features".format(len(self.vocab)))
-        print ("{} labels".format(len(self.label_dict)))
+#         print ("{} labels".format(len(self.label_dict)))
         
         self.G = nx.from_dict_of_lists(self.adj)
         
@@ -54,18 +54,22 @@ class DataLoader(object):
     
     # split into train/test set
     def split_by_edge(self, seed, folder):
-        print ('===== split trn/tst/ set=====')
+        print ('===== split trn/tst/ set=====')        
         rand = random.Random(seed)
         # randomly sample 0.1 of edges for test for each user
         adj_trn = {}
         adj_tst = {idx:[] for idx in self.adj.keys()}
-        for uid, uidx in self.user_dict.items():
+        for _, uidx in self.user_dict.items():
             nei_items = self.adj[uidx]
             tst_num = 0.1 * len(nei_items)
+            if len(adj_tst[uidx]) >= tst_num:
+                continue
             tst_nei_items = rand.sample(nei_items, int(tst_num))
             adj_tst[uidx] = tst_nei_items
             for n in tst_nei_items:
                 adj_tst[n].append(uidx)
+            
+            
         for k, v in self.adj.items():
             adj_trn[k] = list(set(v) - set(adj_tst[k]))
         # statistics

@@ -20,13 +20,12 @@ class UnsupervisedSAGE(object):
     """
     Unsupervised GraphSAGE
     """
-    def __init__(self, placeholders, features, adj, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, degrees, layer_infos, args):
         self.inputs1 = placeholders['batch1']
         self.inputs2 = placeholders['batch2']
         self.batch_size = placeholders['batch_size']
         self.placeholders = placeholders
         
-        self.adj_info = adj
         self.features = tf.Variable(tf.constant(features, dtype=tf.float32), trainable=False)
         self.degrees = degrees
         self.neg_sample_size = args.neg_sample
@@ -170,10 +169,10 @@ class UnsupervisedGAT(UnsupervisedSAGE):
     """
     Unsupervised GAT
     """
-    def __init__(self, placeholders, features, adj, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, degrees, layer_infos, args):
         self.heads = [layer_infos[i].num_head for i in range(len(layer_infos))]
         # define heads first, otherwise cannot _build
-        UnsupervisedSAGE.__init__(self, placeholders, features, adj, degrees, layer_infos, args)
+        UnsupervisedSAGE.__init__(self, placeholders, features, degrees, layer_infos, args)
     
     def init_aggregator(self):
         """ Initialize aggregator layers with creating reuseble convolution variables
@@ -224,32 +223,22 @@ class UnsupervisedGAT(UnsupervisedSAGE):
                 else:
                     next_hidden.append(tf.concat(attns, axis=-1))
             hidden = next_hidden
-        
         return hidden[0]
     
 class UnsupervisedCGAT(UnsupervisedGAT):
     """
-    Unsupervised GAT
+    Unsupervised CGAT
     """
-    def __init__(self, placeholders, features, edgetexts, vocab_dim, adj, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args):
         self.vocab_dim = vocab_dim
         # store edgetexts:
         #    self.edge_sparse = SparseTensor, which stores the idx of edge
         #    self.edge_vecs = [edge_size, vocab_dim] tensor, which stores text for each edge
-        pairs = sorted([list(k) for k in edgetexts.keys()], key=lambda x:(x[0], x[1]))
-        pairs = tf.constant(pairs, dtype=tf.int64)
-        idxs = tf.constant([i for i in range(len(edgetexts))])
-        self.edge_idxs = tf.sparse_to_dense(pairs, [adj.shape[0], adj.shape[0]], idxs)
-        self.edge_vecs = tf.constant(np.array([self.onehot(edgetexts[k], self.vocab_dim) for k in edgetexts.keys()]), dtype=tf.float32)
-        UnsupervisedGAT.__init__(self, placeholders, features, adj, degrees, layer_infos, args)
-        
-    def onehot(self, doc, min_len):
-        vec = []
-        for w_idx, w_cnt in doc.items():
-            for i in range(w_cnt):
-                vec.append(w_idx)
-        return np.bincount(np.array(vec).astype('int'), minlength=min_len)
-    
+        self.edge_idxs = edge_idx
+        self.edge_vecs = edge_vec
+        UnsupervisedGAT.__init__(self, placeholders, features, degrees, layer_infos, args)
+        self.return_topic()
+           
     def _build(self):
         # negative sampling
         labels = tf.reshape(tf.cast(self.placeholders['batch2'], dtype=tf.int64), [self.batch_size, 1])
@@ -318,6 +307,14 @@ class UnsupervisedCGAT(UnsupervisedGAT):
             reconstr_losses += tf.reduce_mean(tf.reduce_mean(reconstr_loss))
             kl_losses += tf.reduce_mean(tf.reduce_mean(kl_loss))
         return (reconstr_losses, kl_losses)
+    
+    def return_topic(self):
+        # topic
+        self.beta = []
+        self.phi = []
+        for layer in range(len(self.dims) - 1):
+            self.beta.append(tf.nn.softmax(tf.contrib.layers.batch_norm(self.vaes[layer].vars['decoder']['beta'])))
+            self.phi.append(self.vaes[layer].vars['encoder']['phi'])
                 
     def init_aggregator(self):
         """ Initialize aggregator layers along with vae
@@ -395,4 +392,110 @@ class UnsupervisedCGAT(UnsupervisedGAT):
         return (hiddens[0], vae_outs)
     
 
+class UnsupervisedCGAT_2(UnsupervisedCGAT):
+    """
+    Unsupervised CGAT with only the last vae layer
+    """
+    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args):
+        UnsupervisedCGAT.__init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args)
+        
+    def return_topic(self):
+        # topic
+        self.beta = []
+        self.phi = []
+        for layer in range(len(self.dims) - 1):
+            if layer == len(self.dims) - 2:
+                beta = tf.nn.softmax(tf.contrib.layers.batch_norm(self.vaes[layer].vars['decoder']['beta']))
+                phi = self.vaes[layer].vars['encoder']['phi']
+                self.beta.append(beta)
+                self.phi.append(phi)
+    
+    def init_aggregator(self):
+        """ Initialize aggregator layers along with vae
+        """
+        self.aggregators = [] # 2 layers: attention layer + channel layer
+        self.vaes = [] # 1 layer: only the last layer encode vae
+        for layer in range(len(self.dims) - 1):
+            dim_mult = 1 if layer==0 else self.heads[layer-1]
+            multihead_attns = []
+            # gcn
+            for head in range(self.heads[layer]):
+                name = 'layer_' + str(layer) + '_' + str(head)
+                if layer == len(self.dims) - 2:
+                    aggregator = ChannelAggregator(name, self.dims[layer], self.dims[layer+1],
+                                                     ffd_drop=self.placeholders['ffd_dropout'],
+                                                     attn_drop=self.placeholders['attn_dropout'], act=lambda x:x)
+                else:
+                    aggregator = AttentionAggregator(name, dim_mult*self.dims[layer], self.dims[layer+1],
+                                                     ffd_drop=self.placeholders['ffd_dropout'], 
+                                                     attn_drop=self.placeholders['attn_dropout'])
+                multihead_attns.append(aggregator)
+            # vae
+            vae = None
+            if layer == len(self.dims) - 2:
+                vae = ChannelVAE(name, dim_mult*self.dims[layer], self.vocab_dim, self.heads[layer], 
+                             dropout=self.placeholders['vae_dropout'])
+            self.vaes.append(vae)
+            self.aggregators.append(multihead_attns)
+    
+    def aggregate(self, samples, support_sizes, edges, batch_size):
+        """ Aggregate embeddings of neighbors to compute the embeddings at next layer
+        Args:
+            samples: a list of node samples hops away at each layer. size=K+1
+            support_sizes: a list of node numbers at each layer. size=K+1
+            batch_size: input size
+        Returns:
+            The final embedding for input nodes
+        """
+        num_samples = [layer_info.num_samples for layer_info in self.layer_infos] # neighbor size for each node (size: K)
+        hiddens = [tf.nn.embedding_lookup([self.features], node_sample) for node_sample in samples] # size: K+1
+        vae_outs = []
+        for layer in range(len(num_samples)):
+            # embedding at current layer for all support nodes hops away
+            next_hiddens = []
+            for hop in range(len(num_samples) - layer):
+                dim_mult = 1 if layer==0 else self.heads[layer-1]
+                # GAT layer for the first n-1 layers
+                if layer < len(num_samples) - 1:
+                    neighbor_dims = [batch_size * support_sizes[hop], 
+                                         num_samples[len(num_samples) - hop - 1],
+                                         dim_mult * self.dims[layer]]
+                    inputs = (hiddens[hop], tf.reshape(hiddens[hop + 1], neighbor_dims))
+                    attns = []
+                    for head in range(self.heads[layer]):
+                        h = self.aggregators[layer][head](inputs)
+                        attns.append(h)
+#                     next_hiddens.append(tf.add_n(attns) / self.heads[layer])
+                    next_hiddens.append(tf.concat(attns, axis=-1))
+                # CGAT layer for the last layer
+                else:  
+                    # construct edge docs
+                    idxs = tf.gather_nd(self.edge_idxs, edges[hop])
+                    docs = tf.nn.embedding_lookup(self.edge_vecs, idxs)
+                    # reshape docs: [batch_size, num_samples, vocab_dim]
+                    doc_dims = [batch_size * support_sizes[hop], 
+                                         num_samples[len(num_samples) - hop - 1],
+                                         self.vocab_dim]
+                    # reshape neighbor info: [batch_size, num_samples, embed_dim]
+                    neighbor_dims = [batch_size * support_sizes[hop], 
+                                         num_samples[len(num_samples) - hop - 1],
+                                         dim_mult * self.dims[layer]]
+                    # go through vae first
+                    inputs1 = (hiddens[hop], tf.reshape(hiddens[hop+1], neighbor_dims),
+                              tf.reshape(docs, doc_dims))
+                    # out = (text_vecs, x_reconstr_mean, theta, mu1, var1, z_mu0, z_var0, z_log_var0_sq)
+                    vae_out = self.vaes[layer](inputs1)
+                    vae_outs.append(vae_out)
+                    channel_vecs = vae_out[2]
+                    # go through ChannelGAT 
+                    attns = []
+                    for head in range(self.heads[layer]):
+                        inputs2 = (hiddens[hop], tf.reshape(hiddens[hop+1], neighbor_dims),
+                               tf.slice(channel_vecs, [0,0,head], [-1,-1,1]))
+                        h = self.aggregators[layer][head](inputs2)
+                        attns.append(h)
+                    next_hiddens.append(tf.add_n(attns) / self.heads[layer])
+            hiddens = next_hiddens
+        return (hiddens[0], vae_outs)
+       
         

@@ -11,21 +11,21 @@ from tensorflow.python.util import deprecation
 
 from src.data_loader import DataLoader
 from src.minibatch import EdgeBatch, NeighborSampler
-from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT
+from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT, UnsupervisedCGAT_2
 
 args = easydict.EasyDict({
-    "infolder": "../dataset/yelp/sample-1582",
-    "outfolder": "../dataset/yelp/sample-1582/embeddings",
-    "gpu": 3,
+    "infolder": "../dataset/stackoverflow/sample-218016", # yelp/sample-641938, stackoverflow/sample-218016
+    "outfolder": "../dataset/stackoverflow/sample-218016/embeddings", # yelp/sample-641938/embeddings, stackoverflow/sample-218016
+    "gpu": 1,
     "model": "SAGE",
-    "epoch": 20,
-    "batch_size": 128, # 64 for GAT; 128 for SAGE
-    "dropout": 0.2,
-    "ffd_dropout": 0.2,
-    "attn_dropout": 0.2,
-    "vae_dropout": 0.2,
+    "epoch": 1,
+    "batch_size": 64, # 64 for GAT; 128 for SAGE
+    "dropout": 0.,
+    "ffd_dropout": 0.,
+    "attn_dropout": 0.,
+    "vae_dropout": 0.,
     "weight_decay": 0.0,
-    "learning_rate": 0.0001,
+    "learning_rate": 0.0005,
     "max_degree": 100,
     "sample1": 25,
     "sample2": 10,
@@ -38,11 +38,12 @@ args = easydict.EasyDict({
 os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 deprecation._PRINT_DEPRECATION_WARNINGS = False
-
+ 
 def train(data_trn):
     # data: graph, node features, random walks
     (G, features, walks, edgetexts, vocab_dim) = data_trn
-    print ('===== start training on graph(node={}, edge={}, walks={})====='.format(len(G.nodes()), len(G.edges()), len(walks)))
+    print ('===== start {} training on graph(node={}, edge={}, walks={})====='.format(
+            args.model, len(G.nodes()), len(G.edges()), len(walks)))
     print ('batch_size: ', '{}\n'.format(args.dropout),
            'max_degree', '{}\n'.format(args.max_degree),
            'sample1: ', '{}\n'.format(args.sample1),
@@ -62,10 +63,19 @@ def train(data_trn):
         'batch_size': tf.placeholder(tf.int32, name='batch_size'),
     }
     
-    # batch of edges (positive samples)
-    minibatch = EdgeBatch(G, placeholders, walks, batch_size=args.batch_size, max_degree=args.max_degree)
+    # batch of edges
+    minibatch = EdgeBatch(G, edgetexts, placeholders, walks, 
+                          batch_size=args.batch_size, max_degree=args.max_degree, vocab_dim=vocab_dim)
+    # adj_info
     adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.adj.shape)
     adj_info = tf.Variable(adj_info_ph, trainable=False, name="adj_info")
+    # (node1, node2) -> edge_idx
+    edge_idx_ph = tf.placeholder(dtype=tf.int32, shape=minibatch.edge_idx.shape)
+    edge_idx = tf.Variable(edge_idx_ph, trainable=False, name='edge_idx')
+    # edge_vecs
+    edge_vec_ph = tf.placeholder(dtype=tf.float32, shape=minibatch.edge_vec.shape)
+    edge_vec = tf.Variable(edge_vec_ph, trainable=False, name='edge_vec')
+
     # sample of neighbor for convolution
     sampler = NeighborSampler(adj_info)
     # two layers
@@ -73,17 +83,24 @@ def train(data_trn):
                    LayerInfo('layer2', sampler, args.sample2, args.dim2, args.head2)]
 
     # initialize session
-    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
+    sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
         
     # GCN model
     if args.model == 'SAGE':
-        model = UnsupervisedSAGE(placeholders, features, adj_info, minibatch.deg, layer_infos, args)
+        model = UnsupervisedSAGE(placeholders, features, minibatch.deg, layer_infos, args)
     elif args.model == 'GAT':
-        model = UnsupervisedGAT(placeholders, features, adj_info, minibatch.deg, layer_infos, args)
+        model = UnsupervisedGAT(placeholders, features, minibatch.deg, layer_infos, args)
+    elif args.model == 'CGAT':
+        model = UnsupervisedCGAT(placeholders, features, vocab_dim, edge_idx, edge_vec, 
+                                 minibatch.deg, layer_infos, args)
     else:
-        model = UnsupervisedCGAT(placeholders, features, edgetexts, vocab_dim, adj_info, minibatch.deg, layer_infos, args)
+        model = UnsupervisedCGAT_2(placeholders, features, vocab_dim, edge_idx, edge_vec, 
+                                 minibatch.deg, layer_infos, args)
 
-    sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj})
+    sess.run(tf.global_variables_initializer(), 
+             feed_dict={adj_info_ph: minibatch.adj, 
+                        edge_idx_ph: minibatch.edge_idx, 
+                        edge_vec_ph: minibatch.edge_vec})
 
     # print out model size
     para_size = np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])
@@ -105,7 +122,7 @@ def train(data_trn):
             feed_dict.update({placeholders['vae_dropout']: args.vae_dropout})
             
             # train  
-            if args.model == 'CGAT':
+            if args.model.startswith('CGAT'):
                 outs = sess.run([model.graph_loss, model.reconstr_loss, model.kl_loss, model.loss, model.mrr], 
                                 feed_dict=feed_dict)
                 graph_loss = outs[0]
@@ -115,7 +132,7 @@ def train(data_trn):
                 train_mrr = outs[4]
             
                 # print log
-                if iter % 50 == 0:
+                if iter % 100 == 0:
                     print ('-- iter: ', '{:4d}'.format(iter),
                            'graph_loss=', '{:.5f}'.format(graph_loss),
                            'reconstr_loss=', '{:.5f}'.format(reconstr_loss),
@@ -125,35 +142,53 @@ def train(data_trn):
                            'time so far=', '{:.5f}'.format((time.time() - t)/60))
             else:
                 outs = sess.run([model.loss, model.mrr, model.inputs1, model.batch_size], feed_dict=feed_dict)
-                if iter % 50 == 0:
+                if iter % 100 == 0:
                     print ('-- iter: ', '{:4d}'.format(iter),
                            'train_loss=', '{:.5f}'.format(outs[0]),
                            'train_mrr=', '{:.5f}'.format(outs[1]),
                            'time so far=', '{:.5f}'.format((time.time() - t)/60))
             iter += 1
             
-    print ('Training finished!')
+    print ('Training {} finished!'.format(args.model))
     
     # save embeddings
     embeddings = []
     nodes = []
     seen = set()
     minibatch.shuffle()
+    iter = 0
     while not minibatch.end_node():
         feed_dict, edges = minibatch.next_nodebatch_feed_dict()
-        outs = sess.run([model.loss, model.mrr, model.outputs1], 
+        print ('-- iter: ', '{:4d}'.format(iter), edges)
+        for p in edges:
+            (n, _) = p
+            if n >= len(G.nodes()):
+                print ('Gotcha!{}'.format(n))
+        if args.model.startswith('CGAT'):
+            outs = sess.run([model.outputs1, model.beta, model.phi], 
+                        feed_dict=feed_dict)
+        else:
+            outs = sess.run([model.outputs1], 
                         feed_dict=feed_dict)
         # only save embeds1 because of planetoid
         for i, edge in enumerate(edges):
             node = edge[0]
             if not node in seen:
-                embeddings.append(outs[-1][i, :])
+                embeddings.append(outs[0][i, :])
                 nodes.append(node)
                 seen.add(node)
+        if iter % 100 == 0:
+            print ('-- iter: ', '{:4d}'.format(iter), 
+                   'node_embeded=', '{}'.format(len(seen)))
+        iter += 1
     if not os.path.exists(args.outfolder):
         os.makedirs(args.outfolder)
     with open('{}/{}.bin'.format(args.outfolder, args.model), 'wb') as f:
         pkl.dump((embeddings, nodes), f)
+    
+    if args.model.startswith('CGAT'):
+        with open('{}/{}softmax_topic.bin'.format(args.outfolder, args.model), 'wb') as f:
+            pkl.dump((outs[1], outs[2]), f)
         
 def main():
     # load data

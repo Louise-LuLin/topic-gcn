@@ -1,5 +1,6 @@
 import numpy as np
 import random
+from scipy.sparse import *
 import tensorflow as tf
 
 np.random.seed(123)
@@ -23,7 +24,7 @@ class EdgeBatch(object):
     """
     sample edge batch
     """
-    def __init__(self, G, placeholders, walks, batch_size=100, max_degree=25):
+    def __init__(self, G, edgetexts, placeholders, walks, batch_size=100, max_degree=25, vocab_dim=5000):
         self.G = G
         self.placeholders = placeholders
         self.batch_size = batch_size
@@ -33,6 +34,14 @@ class EdgeBatch(object):
         self.nodes = np.random.permutation(G.nodes())
         self.edges = np.random.permutation(walks)
         self.adj, self.deg = self.construct_adj()
+        
+        pairs = np.array(sorted([list(k) for k in edgetexts.keys()], key=lambda x:(x[0], x[1])), dtype=np.int64)
+        rows = np.array([p[0] for p in pairs])
+        cols = np.array([p[1] for p in pairs])
+        indexs = np.array([i for i in range(len(edgetexts))], dtype=np.int32)
+        self.edge_idx = csr_matrix((indexs, (rows,cols)), shape=(self.adj.shape[0], self.adj.shape[0])).todense()
+    
+        self.edge_vec = np.array([self.onehot(edgetexts[k], vocab_dim) for k in edgetexts.keys()])
         
     def construct_adj(self):
         adj = len(self.nodes) * np.ones((len(self.nodes), self.max_degree))
@@ -51,6 +60,13 @@ class EdgeBatch(object):
             adj[nid, :] = neighbors
         return adj, deg
     
+    def onehot(self, doc, min_len):
+        vec = []
+        for w_idx, w_cnt in doc.items():
+            for i in range(w_cnt):
+                vec.append(w_idx)
+        return np.bincount(np.array(vec).astype('int'), minlength=min_len)
+
     def end_edge(self):
         return self.batch_num * self.batch_size >= len(self.edges)
     

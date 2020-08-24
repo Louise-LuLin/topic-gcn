@@ -138,6 +138,7 @@ class ChannelAggregator(AttentionAggregator):
             channels = tf.transpose(channels, [0, 2, 1]) # [batch_size, 1, 1+num_samples]
             # channel * attention
             coefs = tf.multiply(channels, coefs)
+#             coefs = tf.add(channels, coefs)
             # dropout
             coefs = tf.nn.dropout(coefs, 1-self.attn_drop)
             vecs_trans = tf.nn.dropout(vecs_trans, 1-self.ffd_drop)
@@ -180,11 +181,15 @@ class ChannelVAE(object):
         """
         self_vecs, neighbor_vecs, text_vecs = inputs
         # construct h_{i}+h_{j}: [batch_size, num_samples, embed_dim]
-        sum_vecs = tf.add(tf.expand_dims(self_vecs, axis=1), neighbor_vecs)
+        sum_vecs = tf.multiply(tf.expand_dims(self_vecs, axis=1), neighbor_vecs)
         
         # prior
-        mu1 = tf.matmul(sum_vecs, self.vars['encoder']['phi']) # [batch_size, num_samples, output_dim]
-        var1 = tf.exp(self.vars['encoder']['sigma']) # [output_dim, output_dim]
+#         mu1 = tf.matmul(sum_vecs, self.vars['encoder']['phi']) # [batch_size, num_samples, output_dim]
+#         var1 = tf.exp(self.vars['encoder']['sigma']) # [output_dim, output_dim]
+        a = tf.exp(tf.nn.softmax(tf.matmul(sum_vecs, self.vars['encoder']['phi']))) # [batch_size, num_samples, output_dim]
+        mu1 = tf.log(a) - tf.expand_dims(tf.reduce_mean(tf.log(a), 2), 2)
+        var1 = (1.0 / a) * (1. - (2.0 / self.channel_dim)) + \
+                 (1.0 / (self.channel_dim * self.channel_dim)) * tf.expand_dims(tf.reduce_sum(1.0 / a, 2), 2)
         
         # encoder network
         layer1 = self.act(tf.add(tf.matmul(text_vecs, self.vars['encoder']['h1_weights']),
@@ -199,15 +204,15 @@ class ChannelVAE(object):
                                                             self.vars['encoder']['sigma_bias']))
         
         # reparameterization trick
-        
         eps = tf.random_normal(shape=(1, self.channel_dim), mean=0., stddev=1., dtype=tf.float32)
         z = tf.add(z_mu0, tf.multiply(tf.sqrt(tf.exp(z_log_var0_sq)), eps))
         z_var0 = tf.exp(z_log_var0_sq)
         
         # decoder network
         theta = tf.nn.dropout(tf.nn.softmax(z), 1.0-self.dropout)
-        x_reconstr_mean = tf.add(tf.matmul(theta, 
-                                           tf.nn.softmax(tf.contrib.layers.batch_norm(self.vars['decoder']['beta']))), 0.0)
+        beta = tf.nn.softmax(tf.contrib.layers.batch_norm(self.vars['decoder']['beta']))
+#         beta = tf.nn.softmax(self.vars['decoder']['beta'])
+        x_reconstr_mean = tf.add(tf.matmul(theta, beta), 0.0)
 
         return (text_vecs, x_reconstr_mean, theta, mu1, var1, z_mu0, z_var0, z_log_var0_sq)
 
