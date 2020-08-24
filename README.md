@@ -21,10 +21,10 @@ Cleanning and processing... will release soon.
 
 ## Cite
 Welcome to try and cite:
-@inproceedings{lin2020graph,
+```@inproceedings{lin2020graph,
   title={Graph Attention Networks over Edge Content-Based Channels},
   author={Lin, Lu and Wang, Hongning},
   booktitle={Proceedings of the 26th ACM SIGKDD International Conference on Knowledge Discovery \& Data Mining},
   pages={1819--1827},
   year={2020}
-}
+}```
