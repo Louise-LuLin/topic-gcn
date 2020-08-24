@@ -165,7 +165,7 @@ class DataLoader(object):
             for i in range(WALK_N):
                 cur_node = node
                 for j in range(WALK_LEN):
-                    next_node = rand.choice(G.neighbors(cur_node))
+                    next_node = rand.choice(list(G.neighbors(cur_node)))
                     # self co-occurrences are useless
                     if cur_node != node:
                         pairs.append((node,cur_node))

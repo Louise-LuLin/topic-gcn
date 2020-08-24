@@ -14,8 +14,8 @@ from src.minibatch import EdgeBatch, NeighborSampler
 from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT, UnsupervisedCGAT_2
 
 args = easydict.EasyDict({
-    "infolder": "../dataset/stackoverflow/sample-218016", # yelp/sample-641938, stackoverflow/sample-218016
-    "outfolder": "../dataset/stackoverflow/sample-218016/embeddings", # yelp/sample-641938/embeddings, stackoverflow/sample-218016
+    "infolder": "../dataset/stackoverflow/sample-51130/", # yelp/sample-641938, stackoverflow/sample-218016
+    "outfolder": "../dataset/stackoverflow/sample-51130/embeddings", # yelp/sample-641938/embeddings, stackoverflow/sample-218016
     "gpu": 1,
     "model": "SAGE",
     "epoch": 1,
