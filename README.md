@@ -30,3 +30,6 @@ Welcome to try and cite:
   year={2020}
 }
 ```
+## Acknowledgement
+The code is partially modified from [williamleif/GraphSAGE](https://github.com/williamleif/GraphSAGE)
+
