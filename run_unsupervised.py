@@ -2,49 +2,82 @@ import os
 import time
 import tensorflow as tf
 import numpy as np
-import easydict
+import argparse
 import pickle as pkl
 import networkx as nx
-import matplotlib.pyplot as plt
-import sys
 from tensorflow.python.util import deprecation
+import logging
 
 from src.data_loader import DataLoader
 from src.minibatch import EdgeBatch, NeighborSampler
 from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT, UnsupervisedCGAT_2
 
-args = easydict.EasyDict({
-    "infolder": "../dataset/stackoverflow/sample-51130/", # yelp/sample-641938, stackoverflow/sample-218016
-    "outfolder": "../dataset/stackoverflow/sample-51130/embeddings", # yelp/sample-641938/embeddings, stackoverflow/sample-218016
-    "gpu": 1,
-    "model": "SAGE",
-    "epoch": 1,
-    "batch_size": 64, # 64 for GAT; 128 for SAGE
-    "dropout": 0.,
-    "ffd_dropout": 0.,
-    "attn_dropout": 0.,
-    "vae_dropout": 0.,
-    "weight_decay": 0.0,
-    "learning_rate": 0.0005,
-    "max_degree": 100,
-    "sample1": 25,
-    "sample2": 10,
-    "dim1": 128,
-    "dim2": 128,
-    "neg_sample": 20,
-    "head1": 8,
-    "head2": 1
-})
-os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-deprecation._PRINT_DEPRECATION_WARNINGS = False
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--training-data-dir', type=str, required=True,
+                        help='path of training data')  # ../dataset/stackoverflow/sample-51130/
+    parser.add_argument('--eval-data-dir', type=str, required=True,
+                        help='path of evaluation data')
+    parser.add_argument('--model-dir', type=str, required=True,
+                        help='HDFS path or local directory')
+    parser.add_argument('--embed-dir', type=str, required=True,
+                        help='HDFS path or local directory')  # ../dataset/stackoverflow/sample-51130/embeddings
+    parser.add_argument('--gpu', type=int, default=1,
+                        help='index of gpu card')
+
+    parser.add_argument('--model-type', type=str, default='cgat',
+                        choices=['graphsage', 'cgat'])
+    parser.add_argument('--epoch', type=int, default=100,
+                        help='Number of epoch')
+    parser.add_argument('--batch-size', type=int, default=64,
+                        help='Number of batch_size')
+    parser.add_argument('--dim1', type=int, default=128, 
+                        help='Size of hidden dim for layer 1')
+    parser.add_argument('--dim2', type=int, default=128, 
+                        help='Size of hidden dim for layer 2')
+    parser.add_argument('--attn-head1', type=int, default=8, 
+                        help='Number of attention head for layer 1')
+    parser.add_argument('--attn-head2', type=int, default=1, 
+                        help='Number of attention head for layer 2')
+    parser.add_argument('--sample1', type=int, default=25,
+                        help="Number of neighbor for layer 1")
+    parser.add_argument('--sample2', type=int, default=10,
+                        help="Number of neighbor for layer 2")
+    parser.add_argument('--neg-sample', type=int, default=20,
+                        help="Number of negative sample")
+    parser.add_argument('--max-degree', type=int, default=100,
+                        help='Maximum degree per node')
+
+    parser.add_argument('--learning-rate', type=float, default=0.0005,
+                        help='Learning rate')
+    parser.add_argument('--weight-decay', type=float, default=0.0, 
+                        help="L2 weight factor")
+    parser.add_argument('--dropout', type=float, default=0.0, 
+                        help="Fraction for dropout  (1 - keep probability)")
+    parser.add_argument('--ffd-dropout', type=float, default=0.0, 
+                        help="Fraction for dropout  (1 - keep probability)")
+    parser.add_argument('--attn-dropout', type=float, default=0.0, 
+                        help="Fraction for dropout  (1 - keep probability)")
+    parser.add_argument('--vae-dropout', type=float, default=0.0, 
+                        help="Fraction for dropout  (1 - keep probability)")
+
+    parser.add_argument('--max-steps', type=int, default=1000000, 
+                        help="Maximum number of steps to batches to train for")
+    parser.add_argument('--eval-steps', type=int, default=1000, 
+                        help="Number of steps to run for validation")
+    parser.add_argument('--checkpoint-steps', type=int, default=1000, 
+                        help="Number of steps between checkpoints")
+
+    return parser.parse_args()
  
-def train(data_trn):
+def train(data_trn, args):
     # data: graph, node features, random walks
     (G, features, walks, edgetexts, vocab_dim) = data_trn
     print ('===== start {} training on graph(node={}, edge={}, walks={})====='.format(
-            args.model, len(G.nodes()), len(G.edges()), len(walks)))
-    print ('batch_size: ', '{}\n'.format(args.dropout),
+            args.model_type, len(G.nodes()), len(G.edges()), len(walks)))
+    print ('batch_size: ', '{}\n'.format(args.batch_size),
            'max_degree', '{}\n'.format(args.max_degree),
            'sample1: ', '{}\n'.format(args.sample1),
            'sample2: ', '{}\n'.format(args.sample2),
@@ -79,23 +112,27 @@ def train(data_trn):
     # sample of neighbor for convolution
     sampler = NeighborSampler(adj_info)
     # two layers
-    layer_infos = [LayerInfo('layer1', sampler, args.sample1, args.dim1, args.head1),
-                   LayerInfo('layer2', sampler, args.sample2, args.dim2, args.head2)]
+    layer_infos = [LayerInfo('layer1', sampler, args.sample1, args.dim1, args.attn_head1),
+                   LayerInfo('layer2', sampler, args.sample2, args.dim2, args.attn_head2)]
 
     # initialize session
     sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
         
     # GCN model
-    if args.model == 'SAGE':
-        model = UnsupervisedSAGE(placeholders, features, minibatch.deg, layer_infos, args)
-    elif args.model == 'GAT':
-        model = UnsupervisedGAT(placeholders, features, minibatch.deg, layer_infos, args)
-    elif args.model == 'CGAT':
+    if args.model_type == 'graphsage':
+        model = UnsupervisedSAGE(placeholders, features, minibatch.deg, layer_infos,
+                                 args.neg_sample, args.learning_rate, args.weight_decay)
+    elif args.model_type == 'gat':
+        model = UnsupervisedGAT(placeholders, features, minibatch.deg, layer_infos,
+                                args.neg_sample, args.learning_rate, args.weight_decay)
+    elif args.model_type == 'cgat':
         model = UnsupervisedCGAT(placeholders, features, vocab_dim, edge_idx, edge_vec, 
-                                 minibatch.deg, layer_infos, args)
+                                 minibatch.deg, layer_infos, 
+                                 args.neg_sample, args.learning_rate, args.weight_decay)
     else:
         model = UnsupervisedCGAT_2(placeholders, features, vocab_dim, edge_idx, edge_vec, 
-                                 minibatch.deg, layer_infos, args)
+                                 minibatch.deg, layer_infos, 
+                                 args.neg_sample, args.learning_rate, args.weight_decay)
 
     sess.run(tf.global_variables_initializer(), 
              feed_dict={adj_info_ph: minibatch.adj, 
@@ -122,7 +159,7 @@ def train(data_trn):
             feed_dict.update({placeholders['vae_dropout']: args.vae_dropout})
             
             # train  
-            if args.model.startswith('CGAT'):
+            if args.model_type.startswith('cgat'):
                 outs = sess.run([model.graph_loss, model.reconstr_loss, model.kl_loss, model.loss, model.mrr], 
                                 feed_dict=feed_dict)
                 graph_loss = outs[0]
@@ -149,7 +186,7 @@ def train(data_trn):
                            'time so far=', '{:.5f}'.format((time.time() - t)/60))
             iter += 1
             
-    print ('Training {} finished!'.format(args.model))
+    print ('Training {} finished!'.format(args.model_type))
     
     # save embeddings
     embeddings = []
@@ -164,7 +201,7 @@ def train(data_trn):
             (n, _) = p
             if n >= len(G.nodes()):
                 print ('Gotcha!{}'.format(n))
-        if args.model.startswith('CGAT'):
+        if args.model_type.startswith('CGAT'):
             outs = sess.run([model.outputs1, model.beta, model.phi], 
                         feed_dict=feed_dict)
         else:
@@ -181,20 +218,29 @@ def train(data_trn):
             print ('-- iter: ', '{:4d}'.format(iter), 
                    'node_embeded=', '{}'.format(len(seen)))
         iter += 1
-    if not os.path.exists(args.outfolder):
-        os.makedirs(args.outfolder)
-    with open('{}/{}.bin'.format(args.outfolder, args.model), 'wb') as f:
+    if not os.path.exists(args.embed_dir):
+        os.makedirs(args.embed_dir)
+    with open('{}/{}.bin'.format(args.embed_dir, args.model_type), 'wb') as f:
         pkl.dump((embeddings, nodes), f)
     
-    if args.model.startswith('CGAT'):
-        with open('{}/{}softmax_topic.bin'.format(args.outfolder, args.model), 'wb') as f:
+    if args.model_type.startswith('CGAT'):
+        with open('{}/{}softmax_topic.bin'.format(args.embed_dir, args.model_type), 'wb') as f:
             pkl.dump((outs[1], outs[2]), f)
         
 def main():
+    args = parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+    deprecation._PRINT_DEPRECATION_WARNINGS = False
+
+    tf.logging.set_verbosity(tf.logging.INFO)
+
     # load data
-    loader = DataLoader(args.infolder)
+    loader = DataLoader(args.training_data_dir)
+
     # train
-    train((loader.G_trn, loader.features, loader.walks, loader.edge_text, len(loader.vocab)))
+    train((loader.G_trn, loader.features, loader.walks, loader.edge_text, len(loader.vocab)), args)
 
 if __name__=='__main__':
     main()

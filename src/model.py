@@ -8,19 +8,21 @@ from src.layer import MeanAggregator, AttentionAggregator, ChannelAggregator, Ch
 
 # LayerInfo is a namedtuple that specifies the parameters 
 # of the recursive layers
-LayerInfo = namedtuple("LayerInfo",
-    ['layer_name', # name of the layer (to get feature embedding etc.)
-     'neighbor_sampler', # callable neigh_sampler constructor
-     'num_samples', # num of sampled neighbor
-     'output_dim', # the output (i.e., hidden) dimension
-     'num_head' # num of head for GAT
-])
+LayerInfo = namedtuple("LayerInfo", ['layer_name', # name of the layer (to get feature embedding etc.)
+                                     'neighbor_sampler', # callable neigh_sampler constructor
+                                     'num_samples', # num of sampled neighbor
+                                     'output_dim', # the output (i.e., hidden) dimension
+                                     'num_head' # num of head for GAT
+                                    ]
+)
+
 
 class UnsupervisedSAGE(object):
     """
     Unsupervised GraphSAGE
     """
-    def __init__(self, placeholders, features, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, degrees, layer_infos, 
+                 neg_sample, learning_rate, weight_decay):
         self.inputs1 = placeholders['batch1']
         self.inputs2 = placeholders['batch2']
         self.batch_size = placeholders['batch_size']
@@ -28,14 +30,14 @@ class UnsupervisedSAGE(object):
         
         self.features = tf.Variable(tf.constant(features, dtype=tf.float32), trainable=False)
         self.degrees = degrees
-        self.neg_sample_size = args.neg_sample
+        self.neg_sample_size = neg_sample
         
         self.dims = [features.shape[1]]
         self.dims.extend([layer_infos[i].output_dim for i in range(len(layer_infos))])
         self.layer_infos = layer_infos
         
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
-        self.weight_decay = args.weight_decay
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+        self.weight_decay = weight_decay
         
         self.build()
         
@@ -169,10 +171,12 @@ class UnsupervisedGAT(UnsupervisedSAGE):
     """
     Unsupervised GAT
     """
-    def __init__(self, placeholders, features, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, degrees, layer_infos, 
+                 neg_sample, learning_rate, weight_decay):
         self.heads = [layer_infos[i].num_head for i in range(len(layer_infos))]
         # define heads first, otherwise cannot _build
-        UnsupervisedSAGE.__init__(self, placeholders, features, degrees, layer_infos, args)
+        UnsupervisedSAGE.__init__(self, placeholders, features, degrees, layer_infos, 
+                                  neg_sample, learning_rate, weight_decay)
     
     def init_aggregator(self):
         """ Initialize aggregator layers with creating reuseble convolution variables
@@ -229,14 +233,13 @@ class UnsupervisedCGAT(UnsupervisedGAT):
     """
     Unsupervised CGAT
     """
-    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args):
+    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, 
+                 neg_sample, learning_rate, weight_decay):
         self.vocab_dim = vocab_dim
-        # store edgetexts:
-        #    self.edge_sparse = SparseTensor, which stores the idx of edge
-        #    self.edge_vecs = [edge_size, vocab_dim] tensor, which stores text for each edge
         self.edge_idxs = edge_idx
         self.edge_vecs = edge_vec
-        UnsupervisedGAT.__init__(self, placeholders, features, degrees, layer_infos, args)
+        UnsupervisedGAT.__init__(self, placeholders, features, degrees, layer_infos, 
+                                 neg_sample, learning_rate, weight_decay)
         self.return_topic()
            
     def _build(self):
@@ -396,8 +399,10 @@ class UnsupervisedCGAT_2(UnsupervisedCGAT):
     """
     Unsupervised CGAT with only the last vae layer
     """
-    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args):
-        UnsupervisedCGAT.__init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, args)
+    def __init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, 
+                 neg_sample, learning_rate, weight_decay):
+        UnsupervisedCGAT.__init__(self, placeholders, features, vocab_dim, edge_idx, edge_vec, degrees, layer_infos, 
+                                  neg_sample, learning_rate, weight_decay)
         
     def return_topic(self):
         # topic

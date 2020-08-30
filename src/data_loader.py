@@ -7,8 +7,8 @@ from os import path
 import networkx as nx
 import pickle as pkl
 
-WALK_LEN=5
-WALK_N=50
+WALK_LEN = 5
+WALK_N = 50
 
 class DataLoader(object):
     def __init__(self, folder, uni_flag=True, seed=448, split="Edge"):
@@ -20,26 +20,17 @@ class DataLoader(object):
             self.item_dict = pkl.load(f)   # dict: k=userID, v=idx
         with open("{}/vocab_map.bin".format(folder), 'rb') as f: #dict: k=word, v=idx
             self.vocab = pkl.load(f)
-        # label
-#         with open("{}/label_map.bin".format(folder), 'rb') as f:  #dict: k=label, v=idx
-#             self.label_dict = pkl.load(f)
-#         with open("{}/node_label{}.bin".format(folder, uni_str), 'rb') as f:  #np.array: node * classN
-#             self.node_label = pkl.load(f)
         # ajacent dict
         with open('{}/adj_all.bin'.format(folder), 'rb') as f: #dict: k=node_idx, v=[neighbors_idx]
             self.adj = pkl.load(f)
 
-        # load edge info
-#         with open("{}/edge_rate.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v=int(ave(rating))
-#             self.edge_rate = pkl.load(f)
+        # load edge content
         with open("{}/edge_text.bin".format(folder), 'rb') as f: #dict: k=(u_idx, i_idx)/(i_idx, u_idx), v={word_idx: count}
             self.edge_text = pkl.load(f)
             
         print ('===== load data =====')
         print ('{} nodes: {} users, {} items'.format(len(self.adj), len(self.user_dict), len(self.item_dict)))
-#         print ("{} unique edges".format(len(self.edge_rate)))
         print ("{} features".format(len(self.vocab)))
-#         print ("{} labels".format(len(self.label_dict)))
         
         self.G = nx.from_dict_of_lists(self.adj)
         
@@ -143,10 +134,6 @@ class DataLoader(object):
         # normalize
         row_sum = x.sum(axis=1)
         x = x / row_sum[:, np.newaxis]
-#         from sklearn.preprocessing import StandardScaler
-#         scaler = StandardScaler()
-#         scaler.fit(x)
-#         x = scaler.transform(x)
         # stats
         lens = []
         for i in range(x.shape[0]):

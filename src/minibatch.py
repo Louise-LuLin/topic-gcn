@@ -3,7 +3,9 @@ import random
 from scipy.sparse import *
 import tensorflow as tf
 
+
 np.random.seed(123)
+
 
 class NeighborSampler(object):
     """
