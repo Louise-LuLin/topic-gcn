@@ -7,9 +7,9 @@ This repo is for paper: [Graph Attention Networks over Edge Content-Based Channe
 
 ## Requirements
 * Python=3.6
-* tensorflow=1.15
+* tensorflow-gpu=1.14
 * networkx
-* Linux or MacOS
+* Linux: cuda-toolkit-10, cudnn-7.5.0
 
 ## Run the Code
 ### Datasets
@@ -17,7 +17,7 @@ Yelp and StackOverflow.
 Cleanning and processing... will release soon.
 
 ### Demo
-`python run_unsupervised.py --infolder $Dataset_folder --outfolder $Embedding_save_folder`
+`python run_unsupervised.py --training-data-dir $training_dataset_folder --embed-dir $embedding_save_folder`
 
 ## Cite
 Welcome to try and cite:
