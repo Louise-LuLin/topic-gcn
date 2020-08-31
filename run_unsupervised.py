@@ -110,7 +110,7 @@ def train(data_trn, args):
                    LayerInfo('layer2', sampler, args.sample2, args.dim2, args.attn_head2)]
 
     # initialize session
-    sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
         
     # GCN model
     model = CGAT(placeholders, features, vocab_dim, edge_idx, edge_vec, 
