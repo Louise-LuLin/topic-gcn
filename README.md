@@ -7,9 +7,9 @@ This repo is for paper: [Graph Attention Networks over Edge Content-Based Channe
 
 ## Requirements
 * Python=3.6
-* tensorflow=1.15
+* tensorflow-gpu=1.14
 * networkx
-* Linux or MacOS
+* Linux: cuda-toolkit-10, cudnn-7.5.0
 
 ## Run the Code
 ### Datasets
