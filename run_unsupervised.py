@@ -10,7 +10,7 @@ import logging
 
 from src.data_loader import DataLoader
 from src.minibatch import EdgeBatch, NeighborSampler
-from src.model import LayerInfo, UnsupervisedSAGE, UnsupervisedGAT, UnsupervisedCGAT, UnsupervisedCGAT_2
+from src.model import LayerInfo, CGAT
 
 
 def parse_args():
@@ -18,17 +18,11 @@ def parse_args():
 
     parser.add_argument('--training-data-dir', type=str, required=True,
                         help='path of training data')  # ../dataset/stackoverflow/sample-51130/
-    parser.add_argument('--eval-data-dir', type=str, required=True,
-                        help='path of evaluation data')
-    parser.add_argument('--model-dir', type=str, required=True,
-                        help='HDFS path or local directory')
     parser.add_argument('--embed-dir', type=str, required=True,
                         help='HDFS path or local directory')  # ../dataset/stackoverflow/sample-51130/embeddings
     parser.add_argument('--gpu', type=int, default=1,
                         help='index of gpu card')
 
-    parser.add_argument('--model-type', type=str, default='cgat',
-                        choices=['graphsage', 'gat', 'cgat', 'cgat2'])
     parser.add_argument('--epoch', type=int, default=100,
                         help='Number of epoch')
     parser.add_argument('--batch-size', type=int, default=64,
@@ -75,8 +69,8 @@ def parse_args():
 def train(data_trn, args):
     # data: graph, node features, random walks
     (G, features, walks, edgetexts, vocab_dim) = data_trn
-    print ('===== start {} training on graph(node={}, edge={}, walks={})====='.format(
-            args.model_type, len(G.nodes()), len(G.edges()), len(walks)))
+    print ('===== start training on graph(node={}, edge={}, walks={})====='.format(
+            len(G.nodes()), len(G.edges()), len(walks)))
     print ('batch_size: ', '{}\n'.format(args.batch_size),
            'max_degree', '{}\n'.format(args.max_degree),
            'sample1: ', '{}\n'.format(args.sample1),
@@ -119,21 +113,10 @@ def train(data_trn, args):
     sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
         
     # GCN model
-    if args.model_type == 'graphsage':
-        model = UnsupervisedSAGE(placeholders, features, minibatch.deg, layer_infos,
-                                 args.neg_sample, args.learning_rate, args.weight_decay)
-    elif args.model_type == 'gat':
-        model = UnsupervisedGAT(placeholders, features, minibatch.deg, layer_infos,
-                                args.neg_sample, args.learning_rate, args.weight_decay)
-    elif args.model_type == 'cgat':
-        model = UnsupervisedCGAT(placeholders, features, vocab_dim, edge_idx, edge_vec, 
-                                 minibatch.deg, layer_infos, 
-                                 args.neg_sample, args.learning_rate, args.weight_decay)
-    else:
-        model = UnsupervisedCGAT_2(placeholders, features, vocab_dim, edge_idx, edge_vec, 
-                                 minibatch.deg, layer_infos, 
-                                 args.neg_sample, args.learning_rate, args.weight_decay)
-
+    model = CGAT(placeholders, features, vocab_dim, edge_idx, edge_vec, 
+                             minibatch.deg, layer_infos, 
+                             args.neg_sample, args.learning_rate, args.weight_decay)
+    
     sess.run(tf.global_variables_initializer(), 
              feed_dict={adj_info_ph: minibatch.adj, 
                         edge_idx_ph: minibatch.edge_idx, 
@@ -159,34 +142,27 @@ def train(data_trn, args):
             feed_dict.update({placeholders['vae_dropout']: args.vae_dropout})
             
             # train  
-            if args.model_type.startswith('cgat'):
-                outs = sess.run([model.graph_loss, model.reconstr_loss, model.kl_loss, model.loss, model.mrr], 
-                                feed_dict=feed_dict)
-                graph_loss = outs[0]
-                reconstr_loss = outs[1]
-                kl_loss = outs[2]
-                train_loss = outs[3]
-                train_mrr = outs[4]
+            outs = sess.run([model.graph_loss, model.reconstr_loss, model.kl_loss, model.loss, model.mrr], 
+                            feed_dict=feed_dict)
+            graph_loss = outs[0]
+            reconstr_loss = outs[1]
+            kl_loss = outs[2]
+            train_loss = outs[3]
+            train_mrr = outs[4]
+        
+            # print log
+            if iter % 100 == 0:
+                print ('-- iter: ', '{:4d}'.format(iter),
+                        'graph_loss=', '{:.5f}'.format(graph_loss),
+                        'reconstr_loss=', '{:.5f}'.format(reconstr_loss),
+                        'kl_loss=', '{:.5f}'.format(kl_loss),
+                        'train_loss=', '{:.5f}'.format(train_loss),
+                        'train_mrr=', '{:.5f}'.format(train_mrr),
+                        'time so far=', '{:.5f}'.format((time.time() - t)/60))
             
-                # print log
-                if iter % 100 == 0:
-                    print ('-- iter: ', '{:4d}'.format(iter),
-                           'graph_loss=', '{:.5f}'.format(graph_loss),
-                           'reconstr_loss=', '{:.5f}'.format(reconstr_loss),
-                           'kl_loss=', '{:.5f}'.format(kl_loss),
-                           'train_loss=', '{:.5f}'.format(train_loss),
-                           'train_mrr=', '{:.5f}'.format(train_mrr),
-                           'time so far=', '{:.5f}'.format((time.time() - t)/60))
-            else:
-                outs = sess.run([model.loss, model.mrr, model.inputs1, model.batch_size], feed_dict=feed_dict)
-                if iter % 100 == 0:
-                    print ('-- iter: ', '{:4d}'.format(iter),
-                           'train_loss=', '{:.5f}'.format(outs[0]),
-                           'train_mrr=', '{:.5f}'.format(outs[1]),
-                           'time so far=', '{:.5f}'.format((time.time() - t)/60))
             iter += 1
             
-    print ('Training {} finished!'.format(args.model_type))
+    print ('Training finished!')
     
     # save embeddings
     embeddings = []
@@ -201,12 +177,10 @@ def train(data_trn, args):
             (n, _) = p
             if n >= len(G.nodes()):
                 print ('Gotcha!{}'.format(n))
-        if args.model_type.startswith('CGAT'):
-            outs = sess.run([model.outputs1, model.beta, model.phi], 
-                        feed_dict=feed_dict)
-        else:
-            outs = sess.run([model.outputs1], 
-                        feed_dict=feed_dict)
+
+        outs = sess.run([model.outputs1, model.beta, model.phi], 
+                    feed_dict=feed_dict)
+
         # only save embeds1 because of planetoid
         for i, edge in enumerate(edges):
             node = edge[0]
@@ -220,12 +194,11 @@ def train(data_trn, args):
         iter += 1
     if not os.path.exists(args.embed_dir):
         os.makedirs(args.embed_dir)
-    with open('{}/{}.bin'.format(args.embed_dir, args.model_type), 'wb') as f:
+    with open('{}/CGAT.bin'.format(args.embed_dir), 'wb') as f:
         pkl.dump((embeddings, nodes), f)
     
-    if args.model_type.startswith('CGAT'):
-        with open('{}/{}softmax_topic.bin'.format(args.embed_dir, args.model_type), 'wb') as f:
-            pkl.dump((outs[1], outs[2]), f)
+    with open('{}/CGAT_topic.bin'.format(args.embed_dir), 'wb') as f:
+        pkl.dump((outs[1], outs[2]), f)
         
 def main():
     print(tf.__version__)
