@@ -2,7 +2,7 @@
 This repo is for paper: [Graph Attention Networks over Edge Content-Based Channels](https://www.kdd.org/kdd2020/accepted-papers/view/graph-attention-networks-over-edge-content-based-channels), [Lu Lin](https://louise-lulin.github.io/) and [Hongning Wang](http://www.cs.virginia.edu/~hw5x/). KDD2020. 
 
 ## Updates
-* [2020.08] Datasets cleaning and processing is ongoing, will release in two weeks...
+* [2020.08] Upload yelp and stackoverflow data
 * [2020.03] Upload model codes
 
 ## Requirements
@@ -13,8 +13,7 @@ This repo is for paper: [Graph Attention Networks over Edge Content-Based Channe
 
 ## Run the Code
 ### Datasets
-Yelp and StackOverflow.
-Cleanning and processing... will release soon.
+Yelp and StackOverflow under folder `./data`
 
 ### Demo
 `python run_unsupervised.py --training-data-dir $training_dataset_folder --embed-dir $embedding_save_folder`
