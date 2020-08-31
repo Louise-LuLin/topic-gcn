@@ -28,7 +28,7 @@ def parse_args():
                         help='index of gpu card')
 
     parser.add_argument('--model-type', type=str, default='cgat',
-                        choices=['graphsage', 'cgat'])
+                        choices=['graphsage', 'gat', 'cgat', 'cgat2'])
     parser.add_argument('--epoch', type=int, default=100,
                         help='Number of epoch')
     parser.add_argument('--batch-size', type=int, default=64,
@@ -228,13 +228,15 @@ def train(data_trn, args):
             pkl.dump((outs[1], outs[2]), f)
         
 def main():
+    print(tf.__version__)
+
     args = parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
     deprecation._PRINT_DEPRECATION_WARNINGS = False
 
-    tf.logging.set_verbosity(tf.logging.INFO)
+    # tf.logging.set_verbosity(tf.logging.INFO)
 
     # load data
     loader = DataLoader(args.training_data_dir)

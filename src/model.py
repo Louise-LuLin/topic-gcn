@@ -301,11 +301,11 @@ class UnsupervisedCGAT(UnsupervisedGAT):
             x_reconstr_mean += 1e-10
             reconstr_loss = -tf.reduce_sum(x * tf.log(x_reconstr_mean), 1)
             # KL loss
-            kl_loss = 0.5 * (tf.reduce_sum(tf.div(z_var0, var1), 1))
-            kl_loss += 0.5 * (tf.reduce_sum(tf.multiply(tf.div((mu1 - z_mu0), var1), (mu1 - z_mu0)), 1))
-            kl_loss -= 0.5 * topic_num 
-            kl_loss += 0.5 * (tf.reduce_mean(tf.log(var1), 1) - tf.reduce_mean(z_log_var0_sq, 1))
-                              
+            kl_loss = 0.5 * (tf.reduce_sum(tf.div(z_var0, var1), 1)) + \
+                      0.5 * (tf.reduce_sum(tf.multiply(tf.div((mu1 - z_mu0), var1), (mu1 - z_mu0)), 1)) - \
+                      0.5 * topic_num + \
+                      0.5 * (tf.reduce_mean(tf.log(var1), 1) - tf.reduce_mean(z_log_var0_sq, 1))
+                         
             # average over [batch_size, num_samples]
             reconstr_losses += tf.reduce_mean(tf.reduce_mean(reconstr_loss))
             kl_losses += tf.reduce_mean(tf.reduce_mean(kl_loss))

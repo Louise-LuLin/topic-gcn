@@ -184,12 +184,18 @@ class ChannelVAE(object):
         sum_vecs = tf.multiply(tf.expand_dims(self_vecs, axis=1), neighbor_vecs)
         
         # prior
-#         mu1 = tf.matmul(sum_vecs, self.vars['encoder']['phi']) # [batch_size, num_samples, output_dim]
-#         var1 = tf.exp(self.vars['encoder']['sigma']) # [output_dim, output_dim]
+        # mu1 = tf.matmul(sum_vecs, self.vars['encoder']['phi']) # [batch_size, num_samples, output_dim]
+        # var1 = tf.exp(self.vars['encoder']['sigma']) # [output_dim, output_dim]
         a = tf.exp(tf.nn.softmax(tf.matmul(sum_vecs, self.vars['encoder']['phi']))) # [batch_size, num_samples, output_dim]
         mu1 = tf.log(a) - tf.expand_dims(tf.reduce_mean(tf.log(a), 2), 2)
         var1 = (1.0 / a) * (1. - (2.0 / self.channel_dim)) + \
                  (1.0 / (self.channel_dim * self.channel_dim)) * tf.expand_dims(tf.reduce_sum(1.0 / a, 2), 2)
+        # self.a = 1*np.ones((1 , self.channel_dim)).astype(np.float32)
+        # mu1 = tf.constant((np.log(self.a).T-np.mean(np.log(self.a),1)).T)
+        # var1 = tf.constant(  ( ( (1.0/self.a)*( 1 - (2.0/self.channel_dim) ) ).T + \
+        #                         ( 1.0/(self.channel_dim*self.channel_dim) )*np.sum(1.0/self.a,1) ).T  )
+        mu1 = tf.nn.softmax(mu1)
+        var1 = tf.nn.softmax(var1)
         
         # encoder network
         layer1 = self.act(tf.add(tf.matmul(text_vecs, self.vars['encoder']['h1_weights']),
@@ -202,6 +208,8 @@ class ChannelVAE(object):
                                                     self.vars['encoder']['mean_bias']))
         z_log_var0_sq = tf.contrib.layers.batch_norm(tf.add(tf.matmul(layer_do, self.vars['encoder']['sigma_weights']),
                                                             self.vars['encoder']['sigma_bias']))
+        z_mu0 = tf.nn.softmax(z_mu0)
+        z_log_var0_sq = tf.log(tf.nn.softmax(z_log_var0_sq))
         
         # reparameterization trick
         eps = tf.random_normal(shape=(1, self.channel_dim), mean=0., stddev=1., dtype=tf.float32)
