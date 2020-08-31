@@ -17,7 +17,7 @@ Yelp and StackOverflow.
 Cleanning and processing... will release soon.
 
 ### Demo
-`python run_unsupervised.py --infolder $Dataset_folder --outfolder $Embedding_save_folder`
+`python run_unsupervised.py --training-data-dir $training_dataset_folder --embed-dir $embedding_save_folder`
 
 ## Cite
 Welcome to try and cite:
